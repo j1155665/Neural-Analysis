@@ -1,10 +1,11 @@
 import os
 import numpy as np
 import xml.etree.ElementTree as ET
+import matplotlib.pyplot as plt
 from tkinter import Tk, filedialog
 
 class NeuralDataLoader:
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, electrode_id = None):
         if base_dir is None:
             try:
                 base_dir = self.select_folder()
@@ -19,7 +20,7 @@ class NeuralDataLoader:
         self.ttl_timestamps = None
         self.channel_positions = None
 
-        self.load_all()
+        self.load_all(electrode_id)
 
     def select_folder(self):
         """Open a dialog to select a folder"""
@@ -40,8 +41,31 @@ class NeuralDataLoader:
             raise FileNotFoundError("Continuous data or timestamps not found")
 
         print("Loading continuous data...")
-        self.continuous_data = np.fromfile(cont_file, dtype=np.int16).reshape((-1, 384))
+        self.continuous_data = np.fromfile(cont_file, dtype=np.int16).reshape((-1, num_channels))
         self.continuous_timestamps = np.load(ts_file)
+
+    def load_spike_data(self, electrode_id):
+        """
+        Load spike timestamps for a specific electrode.
+
+        """
+        spike_dir = os.path.join(
+            self.base_dir,
+            "spikes",
+            "Spike_Detector-110.ProbeA-AP",
+            f"Electrode {electrode_id}"
+        )
+        print(spike_dir)
+        timestamps_file = os.path.join(spike_dir, "timestamps.npy")
+        cluster_file = os.path.join(spike_dir, "clusters.npy")
+
+        if not os.path.exists(timestamps_file):
+            raise FileNotFoundError(f"No spike timestamps found for Electrode {electrode_id}")
+
+        print(f"Loading spikes from Electrode {electrode_id}...")
+        self.spike_times = np.load(timestamps_file)
+        self.cluster_id = np.load(cluster_file)
+       
 
     def load_ttl_data(self):
         """Load TTL full_words.npy and timestamps.npy"""
@@ -81,9 +105,13 @@ class NeuralDataLoader:
         self.channel_positions = pos_matrix
         print("Channel positions loaded as matrix.")
 
-    def load_all(self):
+    def load_all(self, electrode_id):
         """Load all data components"""
-        self.load_continuous_data()
+        if electrode_id is None:
+            self.load_continuous_data()
+        else:
+            self.load_spike_data(electrode_id)
+
         self.load_ttl_data()
         self.load_probe_config()
 
@@ -112,8 +140,8 @@ class NeuralDataLoader:
         spike_times_sec = self.continuous_timestamps[spike_times]
         self.spike_times = spike_times_sec
         print(f"Detected {len(spike_times_sec)} spikes on channel {channel_idx}")
- 
         return self.spike_times
+ 
     
     def parse_ttl_events(self):
         """
@@ -184,10 +212,14 @@ class NeuralDataLoader:
         print(f"\nParsed {len(trial_indices)} trials, {np.sum(event_data['goodtrial'])} good trials.")
         return  self.event_data
 
-    def compute_avg_firing_rate(self):
+    def avg_firing_rate(self, align_info):
+
+        event_name = align_info['event']
+        pre = align_info['pre']
+        post = align_info['post']
+
         conditions = self.event_data['condition']
-        stimoff_times = self.event_data['FIXATION']
-        sacc_times = self.event_data['SACC']
+        align_event = self.event_data[event_name]
         good_trials = self.event_data['goodtrial']
         spike_times = self.spike_times
 
@@ -199,8 +231,12 @@ class NeuralDataLoader:
             trial_inds = np.where((conditions == cond) & (good_trials == 1))[0]
             rates = []
             for idx in trial_inds:
-                start = sacc_times[idx]- (sacc_times[idx] - stimoff_times[idx]) * 1/2
-                end = sacc_times[idx]
+                start = align_event[idx] + pre
+                end = align_event[idx] + post
+
+                if end <= start:
+                    print('check your time')
+                    continue
 
 
                 # Skip if any event missing (NaN) or invalid window
@@ -220,6 +256,48 @@ class NeuralDataLoader:
                 avg_firing_rates[cond] = np.nan  # No good trials for this condition
 
         return avg_firing_rates
+    
+    def plot_avg_firing_rate_heatmap(self, align_info, avg_firing_rates, eccs, angles, vmin=0, vmax=1.5):
+
+
+        event_name = align_info['event']
+        rates = np.array(list(avg_firing_rates.values()))
+
+        if len(rates) == 0 or np.all(np.isnan(rates)):
+            print("No valid firing rates to plot.")
+            return
+
+        z_scores = (rates - np.nanmean(rates)) / np.nanstd(rates)
+
+        x = eccs * np.cos(np.deg2rad(angles))
+        y = eccs * np.sin(np.deg2rad(angles))
+
+        background_size = 12
+
+        plt.figure(figsize=(6, 6))
+        plt.xlim(-background_size, background_size)
+        plt.ylim(-background_size, background_size)
+        plt.gca().set_facecolor(plt.cm.viridis(0.0))
+
+        scatter = plt.scatter(
+            x, y,
+            c=z_scores,
+            cmap='viridis',
+            s=100,
+            edgecolor=None,
+            marker='s',
+            vmin=vmin,
+            vmax=vmax
+        )
+
+        plt.colorbar(scatter, label='Z-scored Firing Rate')
+        plt.xlabel('X position (deg)')
+        plt.ylabel('Y position (deg)')
+        plt.title(f"Memory Saccade Heatmap, {event_name}")
+        plt.grid(False)
+        plt.axis('equal')
+        plt.show()
+
 
 
 
