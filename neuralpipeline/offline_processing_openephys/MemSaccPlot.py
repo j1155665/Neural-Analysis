@@ -257,7 +257,7 @@ class NeuralDataLoader:
 
         return avg_firing_rates
     
-    def plot_avg_firing_rate_heatmap(self, align_info, avg_firing_rates, eccs, angles, vmin=0, vmax=1.5):
+    def plot_avg_firing_rate_heatmap(self, align_info, avg_firing_rates, eccs, angles):
 
 
         event_name = align_info['event']
@@ -267,7 +267,7 @@ class NeuralDataLoader:
             print("No valid firing rates to plot.")
             return
 
-        z_scores = (rates - np.nanmean(rates)) / np.nanstd(rates)
+        # z_scores = (rates - np.nanmean(rates)) / np.nanstd(rates)
 
         x = eccs * np.cos(np.deg2rad(angles))
         y = eccs * np.sin(np.deg2rad(angles))
@@ -281,13 +281,11 @@ class NeuralDataLoader:
 
         scatter = plt.scatter(
             x, y,
-            c=z_scores,
+            c=rates,
             cmap='viridis',
             s=100,
             edgecolor=None,
-            marker='s',
-            vmin=vmin,
-            vmax=vmax
+            marker='s'
         )
 
         plt.colorbar(scatter, label='Z-scored Firing Rate')
